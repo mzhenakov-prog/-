@@ -1,2 +1,3 @@
 aiogram
 requests
+tmdbv3api

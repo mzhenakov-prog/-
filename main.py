@@ -1,109 +1,111 @@
 import telebot
 from telebot import types
-import os
 import requests
 
-# Конфигурация токенов
-TOKEN = '8381032154:AAEQdqCbxcGOuzunPWhPZbXaCjzaPpJbuhM'
-TMDB_API_KEY = 'Fdc70aa152320f85d8acdfda64b69b36'
+# ТВОИ ОБНОВЛЕННЫЕ ДАННЫЕ
+TOKEN = '8381032154:AAFsAnTVBGRrHWvedMweeXHsrJTjKgEWUXM'
+TMDB_API_KEY = 'fdc70aa152320f85d8acdfda64b69b36'
 
 bot = telebot.TeleBot(TOKEN)
 
-# Реферальная система (хранение в памяти)
-# В продакшене лучше использовать БД, но для текущих задач Amvera этого хватит
-user_db = {} # {user_id: {'count': 0, 'name': 'Имя', 'invited_by': None}}
+# База данных в оперативной памяти (сбросится при перезапуске сервера)
+user_db = {} 
 
-# --- ФУНКЦИЯ ПОИСКА TMDB ---
-def get_movie_details(query):
+def search_movie_tmdb(query):
+    """Поиск по безграничной базе TMDB"""
     url = "https://api.themoviedb.org/3/search/movie"
     params = {
         "api_key": TMDB_API_KEY,
         "query": query,
-        "language": "ru-RU",
-        "page": 1
+        "language": "ru-RU"
     }
     try:
-        response = requests.get(url, params=params, timeout=5)
+        response = requests.get(url, params=params, timeout=10)
         data = response.json()
+        
         if data.get('results'):
+            # Берем самый первый (релевантный) результат
             movie = data['results'][0]
             title = movie.get('title', 'Без названия')
             rating = movie.get('vote_average', 0)
-            date = movie.get('release_date', '????')[:4]
-            overview = movie.get('overview', 'Описание на русском языке пока отсутствует.')
+            year = movie.get('release_date', '????')[:4]
+            overview = movie.get('overview', 'Описание на русском языке отсутствует.')
             m_id = movie.get('id')
+            
+            # Ссылка на карточку фильма
             link = f"https://www.themoviedb.org/movie/{m_id}"
             
-            text = (
-                f"🎬 **{title}** ({date})\n"
-                f"⭐ Рейтинг: {rating}/10\n\n"
-                f"📝 **Описание:**\n{overview[:600]}...\n\n"
-                f"🔗 [Смотреть инфо о фильме]({link})"
-            )
-            return text
+            return (f"🎬 *{title}* ({year})\n"
+                    f"⭐ Рейтинг: {rating}/10\n\n"
+                    f"📝 *Описание:*\n{overview[:500]}...\n\n"
+                    f"🔗 [Подробнее и просмотр здесь]({link})")
     except Exception as e:
         print(f"Ошибка API: {e}")
     return None
 
-# --- КЛАВИАТУРА ---
-def main_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    markup.add(types.KeyboardButton("🔍 Поиск фильма"), types.KeyboardButton("👥 Моя ссылка"))
-    markup.add(types.KeyboardButton("📊 Моя статистика"))
+# ГЛАВНОЕ МЕНЮ
+def get_main_menu():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add("🔍 Поиск фильма", "👥 Моя ссылка")
+    markup.add("📊 Моя статистика")
     return markup
 
-# --- КОМАНДА /START + РЕФЕРАЛКА ---
+# КОМАНДА /START + РЕФЕРАЛКА
 @bot.message_handler(commands=['start'])
-def start_handler(message):
-    user_id = message.from_user.id
-    user_name = message.from_user.first_name
-
-    if user_id not in user_db:
-        user_db[user_id] = {'count': 0, 'name': user_name, 'invited_by': None}
+def start_cmd(message):
+    uid = message.from_user.id
+    name = message.from_user.first_name
+    
+    if uid not in user_db:
+        user_db[uid] = {'count': 0, 'name': name}
         
-        # Проверка реферального хвоста: /start 12345
+        # Обработка реферального кода
         args = message.text.split()
         if len(args) > 1 and args[1].isdigit():
-            referrer_id = int(args[1])
-            if referrer_id in user_db and referrer_id != user_id:
-                user_db[user_id]['invited_by'] = referrer_id
-                user_db[referrer_id]['count'] += 1
-                bot.send_message(referrer_id, f"💎 Новый реферал! {user_name} зашел по твоей ссылке.")
+            ref_id = int(args[1])
+            if ref_id in user_db and ref_id != uid:
+                user_db[ref_id]['count'] += 1
+                try:
+                    bot.send_message(ref_id, f"💎 Ура! По твоей ссылке зашел новый пользователь: {name}")
+                except:
+                    pass
 
     bot.send_message(
         message.chat.id, 
-        f"🍿 Привет, {user_name}! Я бот с безграничной базой фильмов.\n\n"
-        "Напиши название любого фильма, и я его найду!",
-        reply_markup=main_keyboard()
+        f"🍿 Привет, {name}! Напиши название любого фильма, и я его найду.",
+        reply_markup=get_main_menu()
     )
 
-# --- ОБРАБОТКА КНОПОК ---
+# ЛОГИКА КНОПОК И ПОИСКА
 @bot.message_handler(func=lambda m: True)
-def handle_all_messages(message):
+def handle_all(message):
     uid = message.from_user.id
-
+    
     if message.text == "🔍 Поиск фильма":
-        bot.send_message(message.chat.id, "Просто отправь мне название фильма текстом 👇")
+        bot.send_message(message.chat.id, "Просто напиши мне название фильма (например: Брат или Начало) 👇")
     
     elif message.text == "👥 Моя ссылка":
         bot_user = bot.get_me().username
-        link = f"https://t.me/{bot_user}?start={uid}"
-        bot.send_message(message.chat.id, f"🔗 Твоя ссылка для приглашений:\n`{link}`", parse_mode="Markdown")
+        ref_link = f"https://t.me/{bot_user}?start={uid}"
+        bot.send_message(message.chat.id, f"🔗 Твоя ссылка для приглашения друзей:\n\n`{ref_link}`", parse_mode="Markdown")
     
     elif message.text == "📊 Моя статистика":
-        count = user_db.get(uid, {}).get('count', 0)
+        # Защита на случай, если юзера нет в базе
+        if uid not in user_db: user_db[uid] = {'count': 0, 'name': message.from_user.first_name}
+        count = user_db[uid]['count']
         bot.send_message(message.chat.id, f"👤 Имя: {user_db[uid]['name']}\n👥 Приглашено друзей: {count}")
-
+    
     else:
-        # Если это не кнопка, значит это поисковый запрос
-        wait_msg = bot.send_message(message.chat.id, "Ищу в базе TMDB... 🔎")
-        movie_info = get_movie_details(message.text)
+        # Если это не кнопка, значит это запрос на поиск фильма
+        status_msg = bot.send_message(message.chat.id, "🔎 Ищу в базе данных...")
+        movie_data = search_movie_tmdb(message.text)
         
-        if movie_info:
-            bot.edit_message_text(movie_info, message.chat.id, wait_msg.message_id, parse_mode="Markdown", disable_web_page_preview=False)
+        if movie_data:
+            bot.edit_message_text(movie_data, message.chat.id, status_msg.message_id, parse_mode="Markdown", disable_web_page_preview=False)
         else:
-            bot.edit_message_text("❌ Ничего не найдено. Попробуй другое название.", message.chat.id, wait_msg.message_id)
+            bot.edit_message_text("❌ К сожалению, ничего не найдено. Попробуй уточнить название.", message.chat.id, status_msg.message_id)
 
+# ЗАПУСК
 if __name__ == '__main__':
-    print("Бот запущен...")
-    bot.infinity_polling()
+    print("Бот успешно запущен на новом токене!")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)

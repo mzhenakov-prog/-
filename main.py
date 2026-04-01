@@ -30,20 +30,14 @@ async def check_sub(user_id):
     return True
 
 async def get_movie_data(query):
-    """Прямой асинхронный запрос к TMDB"""
     url = f"https://api.themoviedb.org/3/search/movie"
-    params = {
-        'api_key': TMDB_API_KEY,
-        'query': query,
-        'language': 'ru'
-    }
+    params = {'api_key': TMDB_API_KEY, 'query': query, 'language': 'ru'}
     async with aiohttp.ClientSession() as session:
         try:
             async with session.get(url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if data['results']:
-                        return data['results'][0]
+                    if data['results']: return data['results'][0]
         except Exception as e:
             logging.error(f"Ошибка сети: {e}")
     return None
@@ -55,48 +49,39 @@ async def start(message: types.Message):
         for ch in CHANNELS:
             builder.row(types.InlineKeyboardButton(text="Подписаться", url=ch["link"]))
         builder.row(types.InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub"))
-        await message.answer("🍿 Чтобы искать фильмы, подпишись на наши каналы:", reply_markup=builder.as_markup())
+        await message.answer("🍿 Подпишись на каналы:", reply_markup=builder.as_markup())
     else:
-        await message.answer("🍿 Доступ открыт! Напиши название фильма.")
+        await message.answer("🍿 Привет! Какой фильм ищем?")
 
 @dp.callback_query(F.data == "check_sub")
 async def callback_check(callback: types.CallbackQuery):
     if await check_sub(callback.from_user.id):
-        await callback.message.edit_text("✅ Спасибо! Какой фильм ищем?")
+        await callback.message.edit_text("✅ Готово! Пиши название фильма.")
     else:
-        await callback.answer("❌ Вы не подписаны!", show_alert=True)
+        await callback.answer("❌ Подписка не найдена!", show_alert=True)
 
 @dp.message(F.text.lower() == "панель")
 async def admin_panel(message: types.Message):
     if message.from_user.id == ADMIN_ID:
         me = await bot.get_me()
-        await message.answer(f"👑 **Админ-панель**\n\nТвоя ссылка:\n`https://t.me/{me.username}?start={ADMIN_ID}`")
+        await message.answer(f"👑 Реф-ссылка: `https://t.me/{me.username}?start={ADMIN_ID}`")
 
 @dp.message()
 async def search_movie(message: types.Message):
-    if not await check_sub(message.from_user.id):
-        return await start(message)
-    
+    if not await check_sub(message.from_user.id): return await start(message)
     movie = await get_movie_data(message.text)
     if movie:
-        title = movie.get('title')
-        date = movie.get('release_date', '----')
-        rating = movie.get('vote_average', 0)
-        overview = movie.get('overview', 'Описание отсутствует.')
-        poster_path = movie.get('poster_path')
-        
-        text = f"🎬 **{title}** ({date[:4]})\n\n⭐️ **Рейтинг:** {rating}/10\n\n📝 **Описание:** {overview[:450]}..."
-        
+        title, date, rating = movie.get('title'), movie.get('release_date', '----'), movie.get('vote_average', 0)
+        overview, poster_path = movie.get('overview', '...'), movie.get('poster_path')
+        text = f"🎬 **{title}** ({date[:4]})\n⭐️ Рейтинг: {rating}\n📝 {overview[:400]}..."
         builder = InlineKeyboardBuilder()
-        builder.row(types.InlineKeyboardButton(text="🍿 СМОТРЕТЬ ФИЛЬМ", url="https://t.me/kinoo_rum"))
-
+        builder.row(types.InlineKeyboardButton(text="🍿 СМОТРЕТЬ", url="https://t.me/kinoo_rum"))
         if poster_path:
-            poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
-            await message.answer_photo(poster_url, caption=text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+            await message.answer_photo(f"https://image.tmdb.org/t/p/w500{poster_path}", caption=text, reply_markup=builder.as_markup(), parse_mode="Markdown")
         else:
             await message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     else:
-        await message.answer("❌ Фильм не найден. Попробуй другое название.")
+        await message.answer("❌ Не найдено.")
 
 async def main():
     await dp.start_polling(bot)

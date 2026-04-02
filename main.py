@@ -3,6 +3,7 @@ import logging
 import urllib.parse
 import aiosqlite
 import aiohttp
+import socket  # Добавлено для решения проблем с IPv6/IPv4
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
@@ -16,6 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 
+# ПРИМЕЧАНИЕ: Рекомендуется вынести эти данные в .env файл
 BOT_TOKEN = "8381032154:AAFsAnTVBGRrHWvedMweeXHsrJTjKgEWUXM"
 TMDB_API_KEY = "fdc70aa152320f85d8acdfda64b69b36"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
@@ -35,6 +37,7 @@ logger = logging.getLogger(__name__)
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
+# --- Системные функции ---
 
 async def check_subscriptions(user_id: int) -> list:
     not_subscribed = []
@@ -49,14 +52,12 @@ async def check_subscriptions(user_id: int) -> list:
             logger.error(f"Check subscription error: {e}")
     return not_subscribed
 
-
 def subscription_keyboard(not_subscribed: list) -> InlineKeyboardMarkup:
     buttons = []
     for ch in not_subscribed:
         buttons.append([InlineKeyboardButton(text=f"👉 Подписаться на {ch['name']}", url=ch["url"])])
     buttons.append([InlineKeyboardButton(text="✅ Я подписался — проверить", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
-
 
 async def require_subscription(message: Message) -> bool:
     not_subscribed = await check_subscriptions(message.from_user.id)
@@ -69,6 +70,7 @@ async def require_subscription(message: Message) -> bool:
         return False
     return True
 
+# --- Работа с БД ---
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -89,7 +91,6 @@ async def init_db():
         """)
         await db.commit()
 
-
 async def register_user(user_id, username, full_name, referred_by=None) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cur:
@@ -107,13 +108,11 @@ async def register_user(user_id, username, full_name, referred_by=None) -> bool:
         await db.commit()
     return True
 
-
 async def get_referral_count(user_id) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,)) as cur:
             row = await cur.fetchone()
     return row[0] if row else 0
-
 
 async def get_referral_list(user_id) -> list:
     async with aiosqlite.connect(DB_PATH) as db:
@@ -125,25 +124,29 @@ async def get_referral_list(user_id) -> list:
         ) as cur:
             return await cur.fetchall()
 
-
 async def get_total_users() -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
             row = await cur.fetchone()
     return row[0] if row else 0
 
+# --- Поиск и API ---
 
 async def search_movies(query: str) -> list:
     results, ids_seen = [], set()
+    # Фикс для ошибки Errno 111: принудительно используем IPv4 и игнорируем системный прокси
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    
     for lang in ("ru-RU", "en-US"):
         if len(results) >= 10:
             break
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
                 async with session.get(
                     f"{TMDB_BASE_URL}/search/multi",
                     params={"api_key": TMDB_API_KEY, "query": query,
-                            "language": lang, "include_adult": "false", "page": "1"}
+                            "language": lang, "include_adult": "false", "page": "1"},
+                    timeout=aiohttp.ClientTimeout(total=10)
                 ) as resp:
                     if resp.status != 200:
                         continue
@@ -167,14 +170,15 @@ async def search_movies(query: str) -> list:
             logger.error(f"Search error: {e}")
     return results
 
-
 async def get_movie_details(movie_id: int, media_type: str) -> dict:
     endpoint = "movie" if media_type == "movie" else "tv"
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
             async with session.get(
                 f"{TMDB_BASE_URL}/{endpoint}/{movie_id}",
-                params={"api_key": TMDB_API_KEY, "language": "ru-RU"}
+                params={"api_key": TMDB_API_KEY, "language": "ru-RU"},
+                timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status == 200:
                     return await resp.json()
@@ -182,11 +186,9 @@ async def get_movie_details(movie_id: int, media_type: str) -> dict:
         logger.error(f"Details error: {e}")
     return {}
 
-
 def stars_rating(rating: float) -> str:
     filled = max(0, min(5, int(round(rating / 2))))
     return "⭐" * filled + "☆" * (5 - filled)
-
 
 def build_movie_text(details: dict, media_type: str) -> str:
     title = details.get("title") or details.get("name") or "Без названия"
@@ -210,13 +212,13 @@ def build_movie_text(details: dict, media_type: str) -> str:
     text += f"\n📅 <b>Год:</b> {year}\n🎭 <b>Жанр:</b> {genres}\n{dur}⭐ <b>Рейтинг:</b> {rating_str}\n\n📝 <b>Описание:</b>\n{overview}"
     return text
 
+# --- Клавиатуры и Обработчики ---
 
 def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     kb = [[KeyboardButton(text="🔍 Поиск фильма")]]
     if user_id == ADMIN_ID:
         kb.append([KeyboardButton(text="👥 Рефералы")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, persistent=True)
-
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
@@ -279,7 +281,6 @@ async def cmd_start(message: Message):
 
     await message.answer(text, reply_markup=main_keyboard(user.id))
 
-
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery):
     await callback.answer()
@@ -296,7 +297,6 @@ async def check_sub_callback(callback: CallbackQuery):
             "✅ <b>Отлично! Теперь можете пользоваться ботом.</b>\n\nНапишите название фильма 🎬",
             reply_markup=main_keyboard(callback.from_user.id)
         )
-
 
 @dp.message(F.text == "👥 Рефералы")
 @dp.message(Command("referrals"))
@@ -332,7 +332,6 @@ async def show_referrals(message: Message):
     ]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
-
 @dp.callback_query(F.data == "refresh_refs")
 async def refresh_refs(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -341,7 +340,6 @@ async def refresh_refs(callback: CallbackQuery):
     await callback.answer("Обновлено!")
     await show_referrals(callback.message)
 
-
 @dp.message(F.text == "🔍 Поиск фильма")
 @dp.message(Command("search"))
 async def prompt_search(message: Message):
@@ -349,7 +347,6 @@ async def prompt_search(message: Message):
         if not await require_subscription(message):
             return
     await message.answer("🔍 Введите название фильма или сериала:")
-
 
 @dp.message(F.text & ~F.text.in_({"🔍 Поиск фильма", "👥 Рефералы"}))
 async def handle_text(message: Message):
@@ -377,7 +374,6 @@ async def handle_text(message: Message):
     if row:
         buttons.append(row)
     await loading.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-
 
 @dp.callback_query(F.data.startswith("mv_"))
 async def show_details(callback: CallbackQuery):
@@ -409,12 +405,10 @@ async def show_details(callback: CallbackQuery):
             logger.warning(f"Photo failed: {e}")
     await callback.message.answer(text[:4000], reply_markup=keyboard)
 
-
 @dp.callback_query(F.data == "new_search")
 async def new_search(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("🔍 Введите название фильма или сериала:")
-
 
 async def main():
     await init_db()
@@ -424,7 +418,6 @@ async def main():
     ])
     logger.info("Bot started!")
     await dp.start_polling(bot, skip_updates=True)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

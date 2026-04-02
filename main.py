@@ -12,8 +12,6 @@ TMDB_API_KEY = "fdc70aa152320f85d8acdfda64b69b36"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-session = aiohttp.ClientSession()
-
 # --- база данных рефералов ---
 DB_NAME = "users.db"
 
@@ -69,13 +67,15 @@ async def refs(message: types.Message):
     await message.answer(f"👥 Твои рефералы: {count}\n\n🔗 Твоя ссылка:\n{link}")
 
 # --- поиск фильмов ---
+async def search_movie_api(query, session):
+    url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={query}&language=ru-RU"
+    async with session.get(url) as resp:
+        return await resp.json()
+
 @dp.message()
 async def search_movie(message: types.Message):
-    query = message.text
-    url = f"https://api.themoviedb.org/3/search/movie?api_key={TMDB_API_KEY}&query={query}&language=ru-RU"
-
-    async with session.get(url) as resp:
-        data = await resp.json()
+    async with aiohttp.ClientSession() as session:
+        data = await search_movie_api(message.text, session)
 
     results = data.get("results", [])[:10]
     if not results:
@@ -91,18 +91,22 @@ async def search_movie(message: types.Message):
     await message.answer("🎬 Выбери фильм:", reply_markup=kb)
 
 # --- выбор фильма ---
+async def get_film_details(film_id, session):
+    url = f"https://api.themoviedb.org/3/movie/{film_id}?api_key={TMDB_API_KEY}&language=ru-RU"
+    async with session.get(url) as resp:
+        return await resp.json()
+
 @dp.callback_query(lambda c: c.data.startswith("film_"))
 async def show_film(callback: types.CallbackQuery):
     film_id = callback.data.split("_")[1]
-    url = f"https://api.themoviedb.org/3/movie/{film_id}?api_key={TMDB_API_KEY}&language=ru-RU"
-    async with session.get(url) as resp:
-        film = await resp.json()
+
+    async with aiohttp.ClientSession() as session:
+        film = await get_film_details(film_id, session)
 
     title = film["title"]
     overview = film.get("overview") or "Нет описания"
     rating = film.get("vote_average")
     poster = f"https://image.tmdb.org/t/p/w500{film['poster_path']}"
-
     watch_url = f"https://yandex.kz/search/?text={title}+смотреть+онлайн"
 
     kb = InlineKeyboardMarkup(
@@ -110,7 +114,6 @@ async def show_film(callback: types.CallbackQuery):
     )
 
     text = f"🎬 <b>{title}</b>\n\n⭐ {rating}\n\n📄 {overview}"
-
     await callback.message.answer_photo(
         photo=poster,
         caption=text,

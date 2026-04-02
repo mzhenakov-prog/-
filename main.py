@@ -6,12 +6,10 @@ import aiohttp
 import socket
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton,
-    BotCommand
+    Message, CallbackQuery, InlineKeyboardMarkup, 
+    InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 )
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
@@ -22,7 +20,7 @@ TMDB_API_KEY = "fdc70aa152320f85d8acdfda64b69b36"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 DB_PATH = "bot_database.db"
-ADMIN_ID = 5298604296  # Ваш ID
+ADMIN_ID = 5298604296 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -53,23 +51,21 @@ async def register_user(user_id, username, full_name, referred_by=None):
         await db.commit()
     return True
 
-# --- ПОИСК (Исправленный коннектор) ---
+# --- ФУНКЦИИ ПОИСКА (С ФИКСОМ ОШИБКИ 111) ---
 async def search_movies(query: str) -> list:
-    results = []
-    # Фикс для IPv4 и обхода прокси
+    # trust_env=False игнорирует локальные прокси (127.0.0.1) из логов
     connector = aiohttp.TCPConnector(family=socket.AF_INET, verify_ssl=False)
     async with aiohttp.ClientSession(connector=connector, trust_env=False) as session:
         try:
-            params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU"}
+            params = {"api_key": TMDB_API_KEY, "query": query, "language": "ru-RU", "include_adult": "false"}
             async with session.get(f"{TMDB_BASE_URL}/search/multi", params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    for item in data.get("results", []):
-                        if item.get("media_type") in ("movie", "tv"):
-                            results.append(item)
+                    return [i for i in data.get("results", []) if i.get("media_type") in ("movie", "tv")][:5]
+                logger.error(f"TMDB Error: {resp.status}")
         except Exception as e:
-            logger.error(f"Ошибка поиска: {e}")
-    return results[:5]
+            logger.error(f"Сетевая ошибка ( Errno 111?): {e}")
+    return []
 
 async def get_movie_details(movie_id: int, media_type: str) -> dict:
     connector = aiohttp.TCPConnector(family=socket.AF_INET, verify_ssl=False)
@@ -82,97 +78,80 @@ async def get_movie_details(movie_id: int, media_type: str) -> dict:
     return {}
 
 # --- ИНТЕРФЕЙС ---
-def get_main_kb(user_id):
-    kb = [[KeyboardButton(text="🔍 Поиск фильма")]]
+def main_kb(user_id):
+    buttons = [[KeyboardButton(text="🔍 Поиск фильма")]]
     if user_id == ADMIN_ID:
-        kb.append([KeyboardButton(text="👥 Рефералы и Статистика")])
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+        buttons.append([KeyboardButton(text="👥 Рефералы")])
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
 
 @dp.message(CommandStart())
-async def cmd_start(m: Message):
+async def start(m: Message):
     ref_id = None
     if len(m.text.split()) > 1 and "ref_" in m.text:
         try: ref_id = int(m.text.split()[1].replace("ref_", ""))
         except: pass
-    
     await register_user(m.from_user.id, m.from_user.username, m.from_user.full_name, ref_id)
-    await m.answer(f"🍿 Привет! Я найду любой фильм, покажу актеров и дам ссылку.\n\nНажми кнопку ниже 👇", 
-                   reply_markup=get_main_kb(m.from_user.id))
+    await m.answer("🍿 Привет! Напиши название фильма, и я найду его описание, актеров и рейтинг.", 
+                   reply_markup=main_kb(m.from_user.id))
 
-@dp.message(F.text == "👥 Рефералы и Статистика")
-async def admin_menu(m: Message):
+@dp.message(F.text == "👥 Рефералы")
+async def refs_menu(m: Message):
     if m.from_user.id != ADMIN_ID: return
-    
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as c1:
             total = (await c1.fetchone())[0]
         async with db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (ADMIN_ID,)) as c2:
-            refs = (await c2.fetchone())[0]
-
-    me = await bot.get_me()
-    link = f"https://t.me/{me.username}?start=ref_{ADMIN_ID}"
-    
-    await m.answer(f"<b>📊 Статистика бота:</b>\n\n"
-                   f"👤 Всего юзеров: <code>{total}</code>\n"
-                   f"🤝 Ваших рефералов: <code>{refs}</code>\n\n"
-                   f"🔗 <b>Ваша ссылка для приглашения:</b>\n<code>{link}</code>")
+            count = (await c2.fetchone())[0]
+    bot_info = await bot.get_me()
+    link = f"https://t.me/{bot_info.username}?start=ref_{ADMIN_ID}"
+    await m.answer(f"<b>📊 Статистика</b>\n\nЮзеров всего: {total}\nРефералов: {count}\n\n🔗 Ссылка:\n<code>{link}</code>")
 
 @dp.message(F.text == "🔍 Поиск фильма")
-async def ask_query(m: Message):
-    await m.answer("🔎 Напишите название фильма или сериала:")
+async def search_prompt(m: Message):
+    await m.answer("🔎 Введите название:")
 
 @dp.message(F.text)
-async def perform_search(m: Message):
+async def handle_query(m: Message):
     if m.text.startswith("/"): return
-    
-    wait = await m.answer("🔄 Ищу...")
-    res = await search_movies(m.text)
-    await wait.delete()
-    
-    if not res:
-        await m.answer("😔 Ничего не найдено. Попробуйте уточнить название.")
+    status = await m.answer("🔄 Ищу...")
+    results = await search_movies(m.text)
+    await status.delete()
+    if not results:
+        await m.answer("😔 Ничего не найдено. Проверь название или попробуй позже.")
         return
-    
     kb = []
-    for item in res:
+    for item in results:
         name = item.get("title") or item.get("name")
         year = (item.get("release_date") or item.get("first_air_date") or "??")[:4]
-        kb.append([InlineKeyboardButton(text=f"{name} ({year})", callback_data=f"d_{item['id']}_{item['media_type']}")])
-    
-    await m.answer("🎬 Выберите нужный вариант:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        kb.append([InlineKeyboardButton(text=f"{name} ({year})", callback_data=f"m_{item['id']}_{item['media_type']}")])
+    await m.answer("🎬 Выберите вариант:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@dp.callback_query(F.data.startswith("d_"))
+@dp.callback_query(F.data.startswith("m_"))
 async def movie_info(c: CallbackQuery):
     _, mid, mtype = c.data.split("_")
     d = await get_movie_details(mid, mtype)
     if not d: return
-
     title = d.get("title") or d.get("name")
     year = (d.get("release_date") or d.get("first_air_date") or "Н/Д")[:4]
-    actors = ", ".join([a.get("name") for a in d.get("credits", {}).get("cast", [])[:4]])
-    
+    actors = ", ".join([a.get("name") for a in d.get("credits", {}).get("cast", [])[:4]]) or "Нет данных"
     text = (f"🎬 <b>{title} ({year})</b>\n\n"
             f"⭐ Рейтинг: <b>{d.get('vote_average', 0):.1f}/10</b>\n"
             f"👥 В ролях: <i>{actors}</i>\n\n"
-            f"📝 {d.get('overview', 'Описания пока нет.')[:600]}...")
-    
-    # Ссылка в Google
-    q = urllib.parse.quote(f"{title} {year} смотреть онлайн бесплатно")
+            f"📝 {d.get('overview', 'Описание отсутствует.')[:500]}...")
+    q = urllib.parse.quote(f"{title} {year} смотреть онлайн")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌐 Смотреть (Google)", url=f"https://www.google.com/search?q={q}")],
-        [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="re")]
+        [InlineKeyboardButton(text="🌐 Найти в Google", url=f"https://www.google.com/search?q={q}")],
+        [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="reset")]
     ])
-    
     await c.message.delete()
     if d.get("poster_path"):
         await c.message.answer_photo(f"{TMDB_IMAGE_BASE}{d['poster_path']}", caption=text, reply_markup=kb)
     else:
         await c.message.answer(text, reply_markup=kb)
 
-@dp.callback_query(F.data == "re")
-async def re_search(c: CallbackQuery):
-    await c.message.answer("🔎 Введите название:")
-    await c.answer()
+@dp.callback_query(F.data == "reset")
+async def reset_cb(c: CallbackQuery):
+    await c.message.answer("🔎 Введите название фильма:")
 
 async def main():
     await init_db()

@@ -3,7 +3,7 @@ import requests
 import os
 
 # ========== НАСТРОЙКИ ==========
-BOT_TOKEN = '8381032154:AAEQdqCbxcGOuzunPWhPZbXaCjzaPpJbuhM'
+BOT_TOKEN = '8381032154:AAFsAnTVBGRrHWvedMweeXHsrJTjKgEWUXM'
 TMDB_API_KEY = 'fdc70aa152320f85d8acdfda64b69b36'
 
 bot = telebot.TeleBot(BOT_TOKEN)

@@ -15,20 +15,27 @@ from aiogram.types import (
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+
 BOT_TOKEN = "8381032154:AAFsAnTVBGRrHWvedMweeXHsrJTjKgEWUXM"
 TMDB_API_KEY = "fdc70aa152320f85d8acdfda64b69b36"
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 DB_PATH = "bot_database.db"
+
 ADMIN_ID = 5298604296
+
 REQUIRED_CHANNELS = [
     {"id": -1003861409701, "url": "https://t.me/kinoo_rum",  "name": "🎬 Kino Rum"},
     {"id": -1001888094511, "url": "https://t.me/lyubimkatt", "name": "❤️ Lyubimkat"},
 ]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
+
+
 async def check_subscriptions(user_id: int) -> list:
     not_subscribed = []
     for channel in REQUIRED_CHANNELS:
@@ -41,22 +48,28 @@ async def check_subscriptions(user_id: int) -> list:
         except Exception as e:
             logger.error(f"Check subscription error: {e}")
     return not_subscribed
+
+
 def subscription_keyboard(not_subscribed: list) -> InlineKeyboardMarkup:
     buttons = []
     for ch in not_subscribed:
         buttons.append([InlineKeyboardButton(text=f"👉 Подписаться на {ch['name']}", url=ch["url"])])
     buttons.append([InlineKeyboardButton(text="✅ Я подписался — проверить", callback_data="check_sub")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
 async def require_subscription(message: Message) -> bool:
     not_subscribed = await check_subscriptions(message.from_user.id)
     if not_subscribed:
         text = "🔒 <b>Для использования бота подпишитесь на наши каналы:</b>\n\n"
         for ch in not_subscribed:
-            text += f"• {ch['name']} — {ch['url']}\n"
-        text += "\nПосле подписки нажмите кнопку ниже 👇"
+            text += f"  ➤ {ch['name']} — {ch['url']}\n"
+        text += "\n━━━━━━━━━━━━━━━━━━━━━\nПосле подписки нажмите кнопку ниже 👇"
         await message.answer(text, reply_markup=subscription_keyboard(not_subscribed))
         return False
     return True
+
+
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -75,6 +88,8 @@ async def init_db():
             )
         """)
         await db.commit()
+
+
 async def register_user(user_id, username, full_name, referred_by=None) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,)) as cur:
@@ -91,11 +106,15 @@ async def register_user(user_id, username, full_name, referred_by=None) -> bool:
             )
         await db.commit()
     return True
+
+
 async def get_referral_count(user_id) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM referrals WHERE referrer_id = ?", (user_id,)) as cur:
             row = await cur.fetchone()
     return row[0] if row else 0
+
+
 async def get_referral_list(user_id) -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
@@ -105,11 +124,15 @@ async def get_referral_list(user_id) -> list:
             (user_id,)
         ) as cur:
             return await cur.fetchall()
+
+
 async def get_total_users() -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT COUNT(*) FROM users") as cur:
             row = await cur.fetchone()
     return row[0] if row else 0
+
+
 async def search_movies(query: str) -> list:
     results, ids_seen = [], set()
     for lang in ("ru-RU", "en-US"):
@@ -143,6 +166,8 @@ async def search_movies(query: str) -> list:
         except Exception as e:
             logger.error(f"Search error: {e}")
     return results
+
+
 async def get_movie_details(movie_id: int, media_type: str) -> dict:
     endpoint = "movie" if media_type == "movie" else "tv"
     try:
@@ -156,9 +181,13 @@ async def get_movie_details(movie_id: int, media_type: str) -> dict:
     except Exception as e:
         logger.error(f"Details error: {e}")
     return {}
+
+
 def stars_rating(rating: float) -> str:
     filled = max(0, min(5, int(round(rating / 2))))
     return "⭐" * filled + "☆" * (5 - filled)
+
+
 def build_movie_text(details: dict, media_type: str) -> str:
     title = details.get("title") or details.get("name") or "Без названия"
     original = details.get("original_title") or details.get("original_name") or ""
@@ -180,11 +209,15 @@ def build_movie_text(details: dict, media_type: str) -> str:
         text += f"<i>{original}</i>\n"
     text += f"\n📅 <b>Год:</b> {year}\n🎭 <b>Жанр:</b> {genres}\n{dur}⭐ <b>Рейтинг:</b> {rating_str}\n\n📝 <b>Описание:</b>\n{overview}"
     return text
+
+
 def main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     kb = [[KeyboardButton(text="🔍 Поиск фильма")]]
     if user_id == ADMIN_ID:
         kb.append([KeyboardButton(text="👥 Рефералы")])
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True, persistent=True)
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
     user = message.from_user
@@ -195,20 +228,58 @@ async def cmd_start(message: Message):
             referred_by = int(args[1].replace("ref_", ""))
         except ValueError:
             pass
+
     is_new = await register_user(user.id, user.username or "", user.full_name or "", referred_by)
+    bot_info = await bot.get_me()
+    bot_name = bot_info.first_name or "КиноБот"
+
     if user.id != ADMIN_ID:
-        not_sub = await check_subscriptions(user.id)
-        if not_sub:
-            text = f"👋 <b>Привет, {user.first_name}!</b>\n\nДля использования бота подпишитесь на наши каналы:\n\n"
-            for ch in not_sub:
-                text += f"• {ch['name']} — {ch['url']}\n"
-            text += "\nПосле подписки нажмите кнопку ниже 👇"
-            await message.answer(text, reply_markup=subscription_keyboard(not_sub))
+        not_subscribed = await check_subscriptions(user.id)
+        if not_subscribed:
+            text = (
+                f"👋 <b>Привет, {user.first_name}!</b>\n\n"
+                f"Добро пожаловать в <b>{bot_name}</b>!\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━\n"
+                "🔒 <b>Для доступа к боту</b> подпишитесь\n"
+                "на наши каналы:\n\n"
+            )
+            for ch in not_subscribed:
+                text += f"  ➤ {ch['name']}\n"
+            text += (
+                "\n━━━━━━━━━━━━━━━━━━━━━\n"
+                "После подписки нажмите кнопку ниже 👇"
+            )
+            await message.answer(text, reply_markup=subscription_keyboard(not_subscribed))
             return
-    text = f"🎬 <b>Привет, {user.first_name}!</b>\n\nДобро пожаловать в <b>CineBot</b>!\nНапишите название фильма — найду сразу 🔍"
-    if is_new and referred_by:
-        text += "\n\n🎁 <i>Вы пришли по реферальной ссылке!</i>"
+
+    if is_new:
+        ref_bonus = "\n🎁 <i>Вы пришли по реферальной ссылке — добро пожаловать!</i>\n" if referred_by else ""
+        text = (
+            f"🎬 <b>Привет, {user.first_name}!</b>\n\n"
+            f"Добро пожаловать в <b>{bot_name}</b> —\n"
+            "твой личный помощник в мире кино!\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "🔍 <b>Что умею:</b>\n"
+            "  • Искать фильмы и сериалы\n"
+            "  • Показывать постер, рейтинг, описание\n"
+            "  • Давать ссылку для просмотра онлайн\n"
+            "  • Поиск на русском и английском\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{ref_bonus}"
+            "▶️ Нажми <b>🔍 Поиск фильма</b> или просто\n"
+            "напиши название — и я найду всё! 🍿"
+        )
+    else:
+        text = (
+            f"👋 <b>С возвращением, {user.first_name}!</b>\n\n"
+            f"Рад снова видеть тебя в <b>{bot_name}</b> 🎬\n\n"
+            "Напиши название фильма или сериала\n"
+            "и я сразу найду для тебя всё нужное 🔍"
+        )
+
     await message.answer(text, reply_markup=main_keyboard(user.id))
+
+
 @dp.callback_query(F.data == "check_sub")
 async def check_sub_callback(callback: CallbackQuery):
     await callback.answer()
@@ -216,8 +287,8 @@ async def check_sub_callback(callback: CallbackQuery):
     if not_sub:
         text = "❌ <b>Вы ещё не подписались на все каналы:</b>\n\n"
         for ch in not_sub:
-            text += f"• {ch['name']} — {ch['url']}\n"
-        text += "\nПодпишитесь и нажмите кнопку снова 👇"
+            text += f"  ➤ {ch['name']} — {ch['url']}\n"
+        text += "\n━━━━━━━━━━━━━━━━━━━━━\nПодпишитесь и нажмите кнопку снова 👇"
         await callback.message.edit_text(text, reply_markup=subscription_keyboard(not_sub))
     else:
         await callback.message.delete()
@@ -225,6 +296,8 @@ async def check_sub_callback(callback: CallbackQuery):
             "✅ <b>Отлично! Теперь можете пользоваться ботом.</b>\n\nНапишите название фильма 🎬",
             reply_markup=main_keyboard(callback.from_user.id)
         )
+
+
 @dp.message(F.text == "👥 Рефералы")
 @dp.message(Command("referrals"))
 async def show_referrals(message: Message):
@@ -239,23 +312,27 @@ async def show_referrals(message: Message):
     text = (
         "👥 <b>Реферальная панель</b>\n\n"
         f"🔗 <b>Ваша ссылка:</b>\n<code>{link}</code>\n\n"
-        f"📊 <b>Статистика:</b>\n"
-        f"• Всего пользователей: <b>{total}</b>\n"
-        f"• По реф. ссылке: <b>{count}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "📊 <b>Статистика:</b>\n"
+        f"  • Всего пользователей: <b>{total}</b>\n"
+        f"  • По реф. ссылке: <b>{count}</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
     )
     if ref_list:
         text += "\n<b>Последние рефералы:</b>\n"
         for name, username, joined in ref_list:
             date = str(joined)[:10] if joined else ""
             display = f"@{username}" if username else name or "Пользователь"
-            text += f"• {display} — {date}\n"
+            text += f"  • {display} — {date}\n"
     else:
         text += "\n<i>Пока никто не перешёл по вашей ссылке.</i>"
     buttons = [
-        [InlineKeyboardButton(text="📤 Поделиться", url=f"https://t.me/share/url?url={link}&text=Ищи%20фильмы%20бесплатно!")],
+        [InlineKeyboardButton(text="📤 Поделиться ссылкой", url=f"https://t.me/share/url?url={link}&text=Ищи%20фильмы%20бесплатно!")],
         [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_refs")],
     ]
     await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
 @dp.callback_query(F.data == "refresh_refs")
 async def refresh_refs(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -263,7 +340,18 @@ async def refresh_refs(callback: CallbackQuery):
         return
     await callback.answer("Обновлено!")
     await show_referrals(callback.message)
-@dp.message(F.text)
+
+
+@dp.message(F.text == "🔍 Поиск фильма")
+@dp.message(Command("search"))
+async def prompt_search(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        if not await require_subscription(message):
+            return
+    await message.answer("🔍 Введите название фильма или сериала:")
+
+
+@dp.message(F.text & ~F.text.in_({"🔍 Поиск фильма", "👥 Рефералы"}))
 async def handle_text(message: Message):
     if message.from_user.id != ADMIN_ID:
         if not await require_subscription(message):
@@ -289,6 +377,8 @@ async def handle_text(message: Message):
     if row:
         buttons.append(row)
     await loading.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
 @dp.callback_query(F.data.startswith("mv_"))
 async def show_details(callback: CallbackQuery):
     await callback.answer()
@@ -318,10 +408,14 @@ async def show_details(callback: CallbackQuery):
         except Exception as e:
             logger.warning(f"Photo failed: {e}")
     await callback.message.answer(text[:4000], reply_markup=keyboard)
+
+
 @dp.callback_query(F.data == "new_search")
 async def new_search(callback: CallbackQuery):
     await callback.answer()
     await callback.message.answer("🔍 Введите название фильма или сериала:")
+
+
 async def main():
     await init_db()
     await bot.set_my_commands([
@@ -330,5 +424,7 @@ async def main():
     ])
     logger.info("Bot started!")
     await dp.start_polling(bot, skip_updates=True)
+
+
 if __name__ == "__main__":
     asyncio.run(main())
